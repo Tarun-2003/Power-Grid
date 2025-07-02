@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>IEEE RTS Grid – Voltage Group Coloring</title>
+  <script src="https://d3js.org/d3.v4.min.js"></script>
+  <script src="./cola.min.js"></script>
+  <style>
+    html, body {
+      height: 100%;
+      margin: 0;
+      padding: 0;
+      background: #f9f9f9;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+    }
+
+    svg {
+      background: white;
+      border: 1px solid #ccc;
+      width: 2000px;  /* Increased width */
+      height: 1200px;  /* Increased height */
+    }
+
+    .link {
+      stroke: #aaa;
+      stroke-opacity: 0.6;
+    }
+
+    .node {
+      stroke: #fff;
+      stroke-width: 1.5px;
+      cursor: grab;
+    }
+
+    .label {
+      font: 10px sans-serif;
+      pointer-events: none;
+    }
+
+    #tooltip {
+      position: absolute;
+      background: white;
+      border: 1px solid #ccc;
+      padding: 4px;
+      font-size: 12px;
+      display: none;
+      pointer-events: none;
+    }
+
+    #download-btn {
+      margin-top: 20px;
+      padding: 10px 20px;
+      font-size: 16px;
+      background-color: #4CAF50;
+      color: white;
+      border: none;
+      cursor: pointer;
+    }
+    #download-btn:hover {
+      background-color: #45a049;
+    }
+  </style>
+</head>
+<body>
+  <div id="tooltip"></div>
+  <svg width="960" height="600"></svg> <!-- Increased SVG size -->
+
+  <!-- Button to trigger the download -->
+  <button id="download-btn">Download Segment Map</button>
+
+  <script>
+    let isSegmentMapSaved = false;
+
+    // Function to save the segment map to a JSON file
+    function saveSegmentMap(segmentMap) {
+      if (isSegmentMapSaved) return; // Prevent multiple downloads
+
+      const blob = new Blob([JSON.stringify(segmentMap)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'segmentMap.json'; // File name for download
+      a.click();
+      URL.revokeObjectURL(url); // Clean up the object URL
+
+      isSegmentMapSaved = true; // Mark the map as saved
+    }
+
+    // Load the graph and segment map data
+    d3.json("cytoscape_data.json", function (graphRaw) {
+      const width = 2000, height = 1200;  // Adjusted width and height for larger SVG
+
+      const nodes = graphRaw.nodes.map(n => ({
+        id: n.data.id,
+        voltage: n.data.voltage,
+        group: n.data.voltage
+      }));
+
+      const voltageMap = {};
+      nodes.forEach(n => voltageMap[n.id] = n.voltage);
+
+      const edges = graphRaw.edges
+        .map(e => ({
+          source: e.data.source,
+          target: e.data.target
+        }))
+        .filter(e => voltageMap[e.source] === voltageMap[e.target]);
+
+      const idToIndex = {};
+      nodes.forEach((node, i) => idToIndex[node.id] = i);
+      edges.forEach(link => {
+        link.source = idToIndex[link.source];
+        link.target = idToIndex[link.target];
+      });
+
+      const adjacency = {};
+      nodes.forEach(n => adjacency[n.id] = []);
+      edges.forEach(e => {
+        const src = nodes[e.source].id;
+        const tgt = nodes[e.target].id;
+        adjacency[src].push(tgt);
+        adjacency[tgt].push(src);
+      });
+
+      let componentId = 0;
+      const visited = new Set();
+      const components = [];
+
+      function dfs(nodeId, comp) {
+        visited.add(nodeId);
+        comp.push(nodeId);
+        adjacency[nodeId].forEach(nei => {
+          if (!visited.has(nei)) {
+            dfs(nei, comp);
+          }
+        });
+      }
+
+      nodes.forEach(n => {
+        if (!visited.has(n.id)) {
+          const comp = [];
+          dfs(n.id, comp);
+          comp.forEach(nodeId => {
+            const node = nodes.find(n => n.id === nodeId);
+            node.component = componentId + 1; // Start from 1
+          });
+          components.push(comp);
+          componentId++;
+        }
+      });
+
+      console.log("Number of connected components:", components.length);
+
+      // Output component assignment in flat format
+      const componentAssignment = [];
+      components.forEach((comp, idx) => {
+        comp.forEach(nodeId => {
+          componentAssignment[+nodeId - 1] = idx + 1;
+        });
+      });
+      console.log("Flat Component List (nodeId order):", componentAssignment.join("     "));
+
+      const segmentMap = {};
+      nodes.forEach(n => {
+        segmentMap[n.id] = n.component;
+      });
+
+      // D3 color scale by component (unique color for each component)
+      const color = d3.scaleOrdinal(d3.schemeCategory20);
+
+      const componentColor = d3.scaleOrdinal()
+        .domain(d3.range(1, components.length + 1))
+        .range(d3.schemeCategory20);
+
+      const componentColorMapping = {};
+      componentColor.domain().forEach(function (componentId) {
+        componentColorMapping[componentId] = componentColor(componentId);
+      });
+
+      // Log the component to color mapping
+      console.log("Component to Color Mapping:", componentColorMapping);
+
+      // D3 setup
+      const svg = d3.select("svg");
+      const g = svg.append("g");
+
+      const d3cola = cola.d3adaptor(d3)
+        .size([width, height])
+        .linkDistance(d => d.isTransformer ? 60 : 120)
+        .avoidOverlaps(true)
+        .handleDisconnected(true)
+        .nodes(nodes)
+        .links(edges)
+        .jaccardLinkLengths(100, 0.7)
+        .start(100, 150, 200);
+
+      const link = g.selectAll(".link")
+        .data(edges)
+        .enter().append("line")
+        .attr("class", "link");
+
+      const node = g.selectAll(".node")
+        .data(nodes)
+        .enter().append("circle")
+        .attr("class", "node")
+        .attr("r", 7)
+        .style("fill", d => componentColor(d.component))  // Use the component to set the color
+        .call(d3cola.drag);
+
+      const label = g.selectAll(".label")
+        .data(nodes)
+        .enter().append("text")
+        .attr("class", "label")
+        .text(d => d.id)
+        .attr("x", d => d.x + 12)
+        .attr("y", d => d.y + 12)
+        .call(d3cola.drag);
+
+      const tooltip = d3.select("#tooltip");
+
+      node.on("mouseover", function (d) {
+        tooltip.style("left", (d3.event.pageX + 5) + "px")
+          .style("top", (d3.event.pageY - 28) + "px")
+          .style("display", "block")
+          .html("Bus ID: " + d.id + "<br>Voltage: " + d.voltage + " kV<br>Component: " + d.component);
+      }).on("mouseout", () => tooltip.style("display", "none"));
+
+      d3cola.on("tick", function () {
+        link
+          .attr("x1", d => d.source.x)
+          .attr("y1", d => d.source.y)
+          .attr("x2", d => d.target.x)
+          .attr("y2", d => d.target.y);
+
+        node
+          .attr("cx", d => d.x)
+          .attr("cy", d => d.y);
+
+        label
+          .attr("x", d => d.x + 12)
+          .attr("y", d => d.y + 12);
+      });
+
+      // Trigger download of the segment map when the user clicks the "Download" button
+      document.getElementById('download-btn').addEventListener('click', function () {
+        saveSegmentMap(segmentMap); // Save the segmentMap when the button is clicked
+      });
+    });
+  </script>
+</body>
+</html>
