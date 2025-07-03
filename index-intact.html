@@ -14,24 +14,34 @@
       display: flex;
       align-items: center;
       justify-content: center;
+      overflow: hidden;
+    }
+
+    /* Container that will scroll */
+    #svg-container {
+      width: 100%;
+      height: 100%;
+      overflow: scroll;  /* Enable scrollbars */
+      border: 1px solid #ccc;
+      position: relative;
     }
 
     svg {
       background: white;
       border: 1px solid #ccc;
-      width: 2000px;
-      height: 2000px;
+      width: 3000px;  /* Set a large width to simulate larger content */
+      height: 3000px; /* Set a large height to simulate larger content */
     }
 
     .link {
-      stroke: #000000; /* Set the edges (links) color to black */
+      stroke: #000000;
       stroke-opacity: 0.6;
     }
 
     .transformer-link {
       stroke: red;
       stroke-width: 5px;
-      stroke-dasharray: 8,4; /* Dashed line for transformer edges */
+      stroke-dasharray: 8,4;
     }
 
     .node {
@@ -47,7 +57,7 @@
 
     .group {
       stroke: #333;
-      fill-opacity: 0.85; /* Increased opacity for visibility */
+      fill-opacity: 0.85;
       stroke-width: 2px;
     }
 
@@ -81,7 +91,9 @@
 </head>
 <body>
   <div id="tooltip"></div>
-  <svg width="960" height="600"></svg>
+  <div id="svg-container"> <!-- Container for SVG with scroll -->
+    <svg width="100%" height="100%"></svg>
+  </div>
 
   <script>
     // Fetch the segmentMap from the locally stored JSON file
@@ -100,7 +112,7 @@
             id: n.data.id,
             voltage: n.data.voltage,
             group: n.data.voltage,
-            component: segmentMap[n.data.id] || "Unlabeled",  // Retrieve segment from segmentMap
+            component: segmentMap[n.data.id] || "Unlabeled",
             width: 16,
             height: 16
           })),
@@ -110,7 +122,6 @@
           }))
         };
 
-        // Index mapping
         const idToIndex = {};
         graph.nodes.forEach((node, i) => idToIndex[node.id] = i);
         graph.links.forEach(link => {
@@ -118,16 +129,12 @@
           link.target = idToIndex[link.target];
         });
 
-        // Detect transformer edges (edges where source and target nodes have different voltage levels)
         graph.links.forEach(link => {
           const sourceNode = graph.nodes[link.source];
           const targetNode = graph.nodes[link.target];
-
-          // Mark as transformer link if voltage levels differ
           link.isTransformer = sourceNode.voltage !== targetNode.voltage;
         });
 
-        // Group nodes by component
         const groupMap = {};
         graph.nodes.forEach((node) => {
           if (!groupMap[node.component]) groupMap[node.component] = [];
@@ -138,18 +145,15 @@
           leaves: leafIds.map(id => graph.nodes.findIndex(n => n.id === id))
         }));
 
-        // Updated random color generator function for lighter colors
         const getLightRandomColor = () => {
-          const r = Math.floor(Math.random() * 106) + 150; // Ensuring a lighter color, minimum of 150
-          const g = Math.floor(Math.random() * 106) + 150; // Ensuring a lighter color, minimum of 150
-          const b = Math.floor(Math.random() * 106) + 150; // Ensuring a lighter color, minimum of 150
-          return `rgb(${r},${g},${b})`;  // Random but consistently light colors
+          const r = Math.floor(Math.random() * 106) + 150;
+          const g = Math.floor(Math.random() * 106) + 150;
+          const b = Math.floor(Math.random() * 106) + 150;
+          return `rgb(${r},${g},${b})`;
         };
 
-        // Map segment -> random color for bounding box
         const groupRandomColors = {};
         Object.entries(groupMap).forEach(([segment, nodeIds]) => {
-          // Assign a random light color to each group (segment)
           groupRandomColors[segment] = getLightRandomColor();
         });
 
@@ -160,7 +164,6 @@
 
         const d3cola = cola.d3adaptor(d3)
           .size([width, height])
-          // .linkDistance(120)
           .linkDistance(d => d.isTransformer ? 60 : 120)
           .avoidOverlaps(true)
           .handleDisconnected(true)
@@ -178,15 +181,15 @@
           .attr("ry", 10)
           .style("fill", (d, i) => {
             const segment = Object.keys(groupMap)[i];
-            return groupRandomColors[segment]; // Use random light color here
+            return groupRandomColors[segment];
           })
-          .style("opacity", 0.85)  // Increased opacity for better visibility
+          .style("opacity", 0.85)
           .call(d3cola.drag);
 
         const link = g.selectAll(".link")
           .data(graph.links)
           .enter().append("line")
-          .attr("class", d => d.isTransformer ? "link transformer-link" : "link");  // Apply transformer-link class for transformer edges
+          .attr("class", d => d.isTransformer ? "link transformer-link" : "link");
 
         const node = g.selectAll(".node")
           .data(graph.nodes)
@@ -201,8 +204,8 @@
           .enter().append("text")
           .attr("class", "label")
           .text(d => d.id)
-          .attr("x", d => d.x + 12)  // Increase the x offset to move the label further to the right
-          .attr("y", d => d.y + 12)  // Increase the y offset to move the label further down
+          .attr("x", d => d.x + 12)
+          .attr("y", d => d.y + 12)
           .call(d3cola.drag);
 
         const tooltip = d3.select("#tooltip");
@@ -231,8 +234,8 @@
             .attr("cy", d => d.y);
 
           label
-            .attr("x", d => d.x + 12)  // Adjust label position (further away from nodes)
-            .attr("y", d => d.y + 12); // Adjust label position (further away from nodes)
+            .attr("x", d => d.x + 12)
+            .attr("y", d => d.y + 12);
 
           group
             .attr("x", d => d.bounds.x)
@@ -248,13 +251,10 @@
           g.transition().duration(1000).attr("transform", `translate(${dx},${dy})`);
         }, 1000);
 
-        // Create legend for component colors (only for components with more than 1 node)
         const legend = svg.append("g").attr("class", "legend").attr("transform", "translate(20, 20)");
 
-        // Filter components with more than 1 node
         const filteredGroupMap = Object.entries(groupRandomColors).filter(([key, value]) => groupMap[key].length > 1);
 
-        // Legend for components (bounding boxes colors)
         legend.selectAll(".legend-item")
           .data(filteredGroupMap)
           .enter().append("g")
@@ -270,7 +270,7 @@
               .attr("x", 30)
               .attr("y", 15)
               .style("fill", "#000")
-              .text("Component: "+d[0]);  // Display the component name
+              .text("Component: "+d[0]);
           });
       });
     });

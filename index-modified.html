@@ -17,11 +17,21 @@
       flex-direction: column;
     }
 
+    /* Container for the SVG with zoom and pan functionality */
+    #svg-container {
+      width: 100%;
+      height: 80vh;
+      border: 1px solid #ccc;
+      margin-top: 20px;
+      position: relative;
+      overflow: auto;
+    }
+
     svg {
       background: white;
       border: 1px solid #ccc;
-      width: 2000px;  /* Increased width */
-      height: 1200px;  /* Increased height */
+      width: 100%;
+      height: 100%;
     }
 
     .link {
@@ -36,7 +46,7 @@
     }
 
     .label {
-      font: 10px sans-serif;
+      font: 15px sans-serif;
       pointer-events: none;
     }
 
@@ -44,10 +54,13 @@
       position: absolute;
       background: white;
       border: 1px solid #ccc;
-      padding: 4px;
-      font-size: 12px;
+    
+      font-size: 7.5px;
       display: none;
       pointer-events: none;
+      z-index: 10;
+      line-height: 1.2;
+      max-width: 150px;
     }
 
     #download-btn {
@@ -59,20 +72,48 @@
       border: none;
       cursor: pointer;
     }
+
     #download-btn:hover {
       background-color: #45a049;
+    }
+
+    /* Zoom controls */
+    .zoom-controls {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      z-index: 5;
+    }
+    .zoom-controls button {
+      display: block;
+      width: 30px;
+      height: 30px;
+      margin-bottom: 5px;
+      background: #fff;
+      border: 1px solid #ccc;
+      cursor: pointer;
     }
   </style>
 </head>
 <body>
   <div id="tooltip"></div>
-  <svg width="960" height="600"></svg> <!-- Increased SVG size -->
+
+  <!-- Container for the SVG with zoom and pan functionality -->
+  <div id="svg-container">
+    <svg width="100%" height="100%"></svg>
+    <div class="zoom-controls">
+      <button id="zoom-in">+</button>
+      <button id="zoom-out">-</button>
+      <button id="reset-zoom">⟲</button>
+    </div>
+  </div>
 
   <!-- Button to trigger the download -->
   <button id="download-btn">Download Segment Map</button>
 
   <script>
-    let isSegmentMapSaved = false;
+    let isSegmentMapSaved = false; // Flag to ensure segmentMap is saved only once
+    let currentTransform = d3.zoomIdentity; // Track current transform state
 
     // Function to save the segment map to a JSON file
     function saveSegmentMap(segmentMap) {
@@ -91,7 +132,7 @@
 
     // Load the graph and segment map data
     d3.json("cytoscape_data.json", function (graphRaw) {
-      const width = 2000, height = 1200;  // Adjusted width and height for larger SVG
+      const width = 960, height = 600;
 
       const nodes = graphRaw.nodes.map(n => ({
         id: n.data.id,
@@ -187,6 +228,20 @@
       const svg = d3.select("svg");
       const g = svg.append("g");
 
+      // Initialize zoom behavior with proper transform handling
+      const zoom = d3.zoom()
+        .scaleExtent([0.1, 10])
+        .on('zoom', function(event) {
+          // Safely handle the transform
+          if (event && event.transform) {
+            currentTransform = event.transform;
+            g.attr('transform', currentTransform);
+          }
+        });
+
+      // Apply zoom behavior to SVG with initial identity transform
+      svg.call(zoom.transform, d3.zoomIdentity);
+
       const d3cola = cola.d3adaptor(d3)
         .size([width, height])
         .linkDistance(d => d.isTransformer ? 60 : 120)
@@ -207,7 +262,7 @@
         .enter().append("circle")
         .attr("class", "node")
         .attr("r", 7)
-        .style("fill", d => componentColor(d.component))  // Use the component to set the color
+        .style("fill", d => componentColor(d.component))
         .call(d3cola.drag);
 
       const label = g.selectAll(".label")
@@ -244,9 +299,76 @@
           .attr("y", d => d.y + 12);
       });
 
+      // Auto-scaling to fit the network
+      d3cola.on('end', function() {
+        // Calculate bounds of all nodes
+        const xExtent = d3.extent(nodes, d => d.x);
+        const yExtent = d3.extent(nodes, d => d.y);
+        const graphWidth = xExtent[1] - xExtent[0];
+        const graphHeight = yExtent[1] - yExtent[0];
+        
+        // Calculate scaling factor to fit in container
+        const container = d3.select("#svg-container");
+        const containerWidth = container.node().getBoundingClientRect().width;
+        const containerHeight = container.node().getBoundingClientRect().height;
+        const scale = 0.9 / Math.max(graphWidth / containerWidth, graphHeight / containerHeight);
+        
+        // Calculate center offset
+        const offsetX = (containerWidth - graphWidth * scale) / 2 - xExtent[0] * scale;
+        const offsetY = (containerHeight - graphHeight * scale) / 2 - yExtent[0] * scale;
+        
+        // Create the transform
+        currentTransform = d3.zoomIdentity.translate(offsetX, offsetY).scale(scale);
+        
+        // Apply transform to the group
+        g.attr('transform', currentTransform);
+        
+        // Update zoom behavior with transition
+        svg.transition().duration(500).call(zoom.transform, currentTransform);
+        
+        // Set the SVG dimensions to accommodate the entire graph
+        svg.attr("width", Math.max(containerWidth, graphWidth * scale))
+           .attr("height", Math.max(containerHeight, graphHeight * scale));
+      });
+
+      // Add zoom controls with proper error handling
+      function safeZoom(scaleFactor) {
+        try {
+          svg.transition().duration(250).call(zoom.scaleBy, scaleFactor);
+        } catch (e) {
+          console.error("Zoom error:", e);
+        }
+      }
+
+      document.getElementById('zoom-in').addEventListener('click', function() {
+        safeZoom(1.2);
+      });
+      document.getElementById('zoom-out').addEventListener('click', function() {
+        safeZoom(0.8);
+      });
+      document.getElementById('reset-zoom').addEventListener('click', function() {
+        // Wait for the layout to be ready
+        setTimeout(function() {
+          // Recalculate the initial transform
+          const xExtent = d3.extent(nodes, d => d.x);
+          const yExtent = d3.extent(nodes, d => d.y);
+          const graphWidth = xExtent[1] - xExtent[0];
+          const graphHeight = yExtent[1] - yExtent[0];
+          const container = d3.select("#svg-container");
+          const containerWidth = container.node().getBoundingClientRect().width;
+          const containerHeight = container.node().getBoundingClientRect().height;
+          const scale = 0.9 / Math.max(graphWidth / containerWidth, graphHeight / containerHeight);
+          const offsetX = (containerWidth - graphWidth * scale) / 2 - xExtent[0] * scale;
+          const offsetY = (containerHeight - graphHeight * scale) / 2 - yExtent[0] * scale;
+          
+          currentTransform = d3.zoomIdentity.translate(offsetX, offsetY).scale(scale);
+          svg.transition().duration(750).call(zoom.transform, currentTransform);
+        }, 100);
+      });
+
       // Trigger download of the segment map when the user clicks the "Download" button
       document.getElementById('download-btn').addEventListener('click', function () {
-        saveSegmentMap(segmentMap); // Save the segmentMap when the button is clicked
+        saveSegmentMap(segmentMap);
       });
     });
   </script>
